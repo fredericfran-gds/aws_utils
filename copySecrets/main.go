@@ -12,6 +12,7 @@ import (
 )
 
 var originalName, newName, region *string
+var delete *bool
 
 func init() {
 	fmt.Println("Copying secrets")
@@ -22,6 +23,7 @@ func flags() {
 	originalName = flag.String("original", "", "friendly name of the old secret")
 	newName = flag.String("new", "", "friendly name of the new secret")
 	region = flag.String("region", "", "aws region")
+	delete = flag.Bool("delete", false, "delete old secret after copying")
 
 	flag.Parse()
 
@@ -133,6 +135,37 @@ func createSecret(secretsManager *secretsmanager.SecretsManager, newName string,
 	return nil
 }
 
+func deleteSecret(secretsManager *secretsmanager.SecretsManager, originalName string) error {
+	input := &secretsmanager.DeleteSecretInput{
+		RecoveryWindowInDays: aws.Int64(7),
+		SecretId:             aws.String(originalName),
+	}
+
+	_, err := secretsManager.DeleteSecret(input)
+	if err != nil {
+		if aerr, ok := err.(awserr.Error); ok {
+			switch aerr.Code() {
+			case secretsmanager.ErrCodeResourceNotFoundException:
+				fmt.Println(secretsmanager.ErrCodeResourceNotFoundException, aerr.Error())
+			case secretsmanager.ErrCodeInvalidParameterException:
+				fmt.Println(secretsmanager.ErrCodeInvalidParameterException, aerr.Error())
+			case secretsmanager.ErrCodeInvalidRequestException:
+				fmt.Println(secretsmanager.ErrCodeInvalidRequestException, aerr.Error())
+			case secretsmanager.ErrCodeInternalServiceError:
+				fmt.Println(secretsmanager.ErrCodeInternalServiceError, aerr.Error())
+			default:
+				fmt.Println(aerr.Error())
+			}
+		} else {
+			// Print the error, cast err to awserr.Error to get the Code and
+			// Message from an error.
+			fmt.Println(err.Error())
+		}
+		fmt.Errorf("see previous errors")
+	}
+	return nil
+}
+
 func main() {
 	fmt.Printf("secret %v to be copied in region %v\n", *originalName, *region)
 
@@ -144,7 +177,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("secret value of %s is %s\n", *originalName, secretString)
+	fmt.Printf("successfully retrieved secret %s\n", *originalName)
 
 	err = createSecret(secretsManager, *newName, secretString)
 	if err != nil {
@@ -152,5 +185,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("successfully copied secret with name %s to %s", *originalName, *newName)
+	fmt.Printf("successfully created new secret %s\n", *newName)
+
+	if *delete {
+		err = deleteSecret(secretsManager, *originalName)
+		if err != nil {
+			fmt.Printf("failed to delete secret %s: %v\n", *originalName, err)
+			os.Exit(1)
+		}
+		
+		fmt.Printf("successfully delete old secret %s\n", *originalName)
+	}
+
+	fmt.Printf("successfully copied secret with name %s to %s\n", *originalName, *newName)
 }
